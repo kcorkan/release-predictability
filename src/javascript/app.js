@@ -14,11 +14,18 @@ Ext.define("release-predictability", {
 
     config: {
         defaultSettings: {
-            objectiveField: 'RefinedEstimate',
-            numberOfReleases: 4
+            objectiveField: 'LeafStoryCount',
+            numberOfReleases: 4,
+            doneState: "GA",
+            thresholdIdealLow: 80,
+            thresholdIdealHigh: 100,
+            thresholdOutlier: 120,
+            outlierColor: "#B81B10",
+            idealColor: "#b2e3b6",
+            portfolioItemTypePath: 'PortfolioItem/Feature'
         }
     },
-                        
+
     launch: function() {
         RallyTechServices.utils.Toolbox.fetchPortfolioItemTypes().then({
             success: this.initializeApp,
@@ -29,6 +36,7 @@ Ext.define("release-predictability", {
     initializeApp: function(portfolioItemTypes){
         this.logger.log('initializeApp', portfolioItemTypes);
         this.portfolioItemTypes = portfolioItemTypes;
+        this.updateSettingsValues({'portfolioItemTypePath': portfolioItemTypes[0]});
 
         this.fetchReleaseInfo()
             .then({
@@ -50,6 +58,24 @@ Ext.define("release-predictability", {
     },
     getNumberOfReleases: function(){
         return this.getSetting('numberOfReleases');
+    },
+    getHighThresholdIdeal: function(){
+      return this.getSetting('thresholdIdealHigh');
+    },
+    getLowThresholdIdeal: function(){
+      return this.getSetting('thresholdIdealLow');
+    },
+    getOutlierThreshold: function(){
+      return this.getSetting('thresholdOutlier');
+    },
+    getOutlierColor: function(){
+      return this.getSetting('outlierColor')
+    },
+    getIdealColor: function(){
+      return this.getSetting('idealColor')
+    },
+    getLowestLevelPortfolioItemType: function(){
+      return this.getSetting('portfolioItemTypePath');
     },
     fetchReleaseInfo: function(){
         this.logger.log('fetchReleaseInfo');
@@ -123,9 +149,9 @@ Ext.define("release-predictability", {
                 //  Release: {$in: releases},
                 //  __At: releaseStartDate
             },
-            fetch: ['ObjectID','Name','FormattedID','Project',this.getObjectiveField(),'Release','LeafStoryCount','AcceptedLeafStoryCount'],
+            fetch: ['ObjectID','Name','FormattedID','Project',this.getObjectiveField(),'Release','LeafStoryCount','AcceptedLeafStoryCount','State'],
             removeUnauthorizedSnapshots: true,
-            hydrate: ['Project','Release'],
+            hydrate: ['Project','Release','State'],
             limit: 'Infinity'
         };
 
@@ -210,26 +236,20 @@ Ext.define("release-predictability", {
                 text: 'Release Predictability'
             },
 
-            //subtitle: {
-            //    text: 'Source: thesolarfoundation.com'
-            //},
-
             yAxis: {
                 title: {
                     text: 'Percent of Objectives'
-                }
+                },
+                plotBands: [{ // mark the weekend
+                  color: this.getIdealColor(),
+                  from: this.getLowThresholdIdeal(),
+                  to: this.getHighThresholdIdeal()
+                },{
+                  color: this.getOutlierColor(),
+                  from: this.getOutlierThreshold(),
+                  to: this.getOutlierThreshold()+1
+                }],
             }
-            //legend: {
-            //    layout: 'vertical',
-            //    align: 'right',
-            //    verticalAlign: 'middle'
-            //},
-
-            //plotOptions: {
-            //    series: {
-            //        pointStart: 2010
-            //    }
-            //}
         };
     },
     getDataPoint: function(project, releaseHash){
@@ -245,7 +265,6 @@ Ext.define("release-predictability", {
             start[releaseIdx] = 0;
             for(var i=0; i < releaseStartSnaps.length; i++){
                 var objective = releaseStartSnaps[i].get(objectiveField) || 0;
-                console.log('start snap', objective);
                 start[releaseIdx] += objective;
             }
 
@@ -256,13 +275,12 @@ Ext.define("release-predictability", {
             for(var i=0; i < releaseEndSnaps.length; i++){
                 var snap = releaseEndSnaps[i];
                 var objective = snap.get(objectiveField) || 0;
-                console.log('end snap', objective);
-                if (snap.get('LeafStoryCount') === snap.get('AcceptedLeafStoryCount')){
+                if (this.isSnapDone(snap)){
                     end[releaseIdx] += objective;
                 }
             }
             releaseIdx++;
-        });
+        }, this);
 
         return {
             start: start,
@@ -270,6 +288,14 @@ Ext.define("release-predictability", {
         };
 
 
+    },
+    getDoneState: function(){
+      return this.getSetting('doneState');
+    },
+    isSnapDone: function(snap){
+      this.logger.log('isSnapDone',snap.get('State'), this.getDoneState());
+       return (snap.get('State') && snap.get('State') === this.getDoneState());
+       //return (snap.get('LeafStoryCount') === snap.get('AcceptedLeafStoryCount'));
     },
     getProjectHash: function(snapshots){
         var projectHash  = {};
@@ -294,6 +320,61 @@ Ext.define("release-predictability", {
     showErrorNotification: function(msg){
         Rally.ui.notify.Notifier.showError(msg);
     },
+    getSettingsFields: function(){
+      // objectiveField: 'LeafStoryCount',
+      // numberOfReleases: 4,
+      // doneState: "GA",
+      // thresholdIdealLow: 80,
+      // thresholdIdealHigh: 100,
+      // thresholdOutlier: 120,
+      // outlierColor: "#888",
+      // idealColor: "#FAD200"
+
+      return [{
+         name: 'objectiveField',
+         xtype: 'rallyfieldcombobox',
+         model: this.getLowestLevelPortfolioItemType(),
+         fieldLabel: 'Objective Field',
+         labelAlign: 'right'
+       },{
+        name: 'doneState',
+        xtype: 'rallyfieldvaluecombobox',
+        fieldLabel: 'Done State',
+        labelAlign: 'right',
+        valueField: 'name',
+        field: 'State',
+        model: this.getLowestLevelPortfolioItemType()
+       },{
+        name: 'numberOfReleases',
+        xtype: 'rallynumberfield',
+        minValue: 1,
+        maxValue: 8,
+        fieldLabel: 'Number of Releases',
+        labelAlign: 'right'
+      },{
+        name: 'thresholdIdealLow',
+        xtype: 'rallynumberfield',
+        minValue: 0,
+        maxValue: 120,
+        fieldLabel: 'Ideal Threshold (Low)',
+        labelAlign: 'right'
+      },{
+        name: 'thresholdIdealHigh',
+        xtype: 'rallynumberfield',
+        minValue: 0,
+        maxValue: 120,
+        fieldLabel: 'Ideal Threshold (High)',
+        labelAlign: 'right'
+      },{
+        name: 'thresholdOutlier',
+        xtype: 'rallynumberfield',
+        minValue: 80,
+        maxValue: 200,
+        fieldLabel: 'Outlier Threshold',
+        labelAlign: 'right'
+      }];
+
+    },
     getOptions: function() {
         return [
             {
@@ -303,14 +384,14 @@ Ext.define("release-predictability", {
             }
         ];
     },
-    
+
     _launchInfo: function() {
         if ( this.about_dialog ) { this.about_dialog.destroy(); }
         this.about_dialog = Ext.create('Rally.technicalservices.InfoLink',{});
     },
-    
+
     isExternal: function(){
         return typeof(this.getAppId()) == 'undefined';
     }
-    
+
 });
